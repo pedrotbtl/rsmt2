@@ -34,6 +34,8 @@ fn supported(keyword: &'static str) -> ConfItem {
 pub const Z3_ENV_VAR: &str = "RSMT2_Z3_CMD";
 /// Environment variable providing the command for CVC4.
 pub const CVC4_ENV_VAR: &str = "RSMT2_CVC4_CMD";
+/// Environment variable providing the command for CVC5.
+pub const CVC5_ENV_VAR: &str = "RSMT2_CVC5_CMD";
 /// Environment variable providing the command for Yices 2.
 pub const YICES_2_ENV_VAR: &str = "RSMT2_YICES_2_CMD";
 
@@ -71,6 +73,10 @@ pub enum SmtStyle {
     ///
     /// **NB**: CVC4 has only been partially tested at this point.
     CVC4,
+    /// CVC5-style smt solver.
+    ///
+    /// **NB**: CVC5 has only been partially tested at this point.
+    CVC5,
     /// Yices-2-style smt solver.
     ///
     /// **NB**: Yices 2 has only been partially tested at this point.
@@ -109,6 +115,22 @@ impl SmtStyle {
                 interpolants: false,
                 check_sat_assuming: unsupported(),
             },
+            CVC5 => SmtConf {
+                style: self,
+                cmd,
+                options: vec![
+                    "-q".into(),
+                    "--no-interactive".into(),
+                    "--lang".into(),
+                    "smt2".into(),
+                ],
+                models: false,
+                incremental: false,
+                check_success: false,
+                unsat_cores: false,
+                interpolants: false,
+                check_sat_assuming: supported("check-sat-assuming"),
+            },
             Yices2 => SmtConf {
                 style: self,
                 cmd,
@@ -140,6 +162,7 @@ impl SmtStyle {
         match s {
             "z3" | "Z3" => Some(Z3),
             "cvc4" | "CVC4" => Some(CVC4),
+            "cvc5" | "CVC5" => Some(CVC5),
             "Yices2" | "yices2" | "YICES2" | "Yices 2" | "yices 2" | "YICES 2" => Some(Yices2),
             _ => None,
         }
@@ -148,7 +171,7 @@ impl SmtStyle {
     #[allow(dead_code)]
     pub fn str_keys() -> Vec<&'static str> {
         vec![
-            "z3", "Z3", "cvc4", "CVC4", "Yices2", "yices2", "YICES2", "Yices 2", "yices 2",
+            "z3", "Z3", "cvc4", "CVC4", "cvc5", "CVC5", "Yices2", "yices2", "YICES2", "Yices 2", "yices 2",
             "YICES 2",
         ]
     }
@@ -161,6 +184,7 @@ impl SmtStyle {
         match self {
             Z3 => get_env_var(Z3_ENV_VAR),
             CVC4 => get_env_var(CVC4_ENV_VAR),
+            CVC5 => get_env_var(CVC5_ENV_VAR),
             Yices2 => get_env_var(YICES_2_ENV_VAR),
         }
     }
@@ -171,6 +195,7 @@ impl SmtStyle {
         match self {
             Z3 => "z3",
             CVC4 => "cvc4",
+            CVC5 => "cvc5",
             Yices2 => "yices",
         }
     }
@@ -180,6 +205,7 @@ impl SmtStyle {
         match self {
             Z3 => "z3.exe",
             CVC4 => "cvc4.exe",
+            CVC5 => "cvc5.exe",
             Yices2 => "yices.exe",
         }
     }
@@ -195,6 +221,7 @@ impl fmt::Display for SmtStyle {
         match *self {
             Z3 => write!(fmt, "z3"),
             CVC4 => write!(fmt, "cvc4"),
+            CVC5 => write!(fmt, "cvc5"),
             Yices2 => write!(fmt, "yices2"),
         }
     }
@@ -266,6 +293,20 @@ impl SmtConf {
     #[inline]
     pub fn cvc4(cmd: impl Into<String>) -> Self {
         CVC4.new(cmd)
+    }
+
+    /// Creates a new cvc5-like solver configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use rsmt2::SmtConf;
+    /// let conf = SmtConf::cvc5("my_cvc5_command");
+    /// assert!(conf.get_cmd() == "my_cvc5_command")
+    /// ```
+    #[inline]
+    pub fn cvc5(cmd: impl Into<String>) -> Self {
+        CVC5.new(cmd)
     }
 
     /// Creates a new yices-2-like solver configuration.
@@ -386,6 +427,58 @@ impl SmtConf {
         }
     }
 
+    /// Creates a CVC5-like solver configuration from an optional, or the value of the
+    /// [`CVC5_ENV_VAR`] environment variable.
+    ///
+    /// Fails if `cmd.is_none()` and [`CVC5_ENV_VAR`] is not set.
+    ///
+    /// ```rust
+    /// use rsmt2::conf::{SmtConf, CVC5_ENV_VAR};
+    /// use std::env::{set_var, var_os};
+    ///
+    /// // Passes the command directly.
+    /// let cmd = "cvc5_explicit";
+    /// let explicit_cmd = SmtConf::cvc5_or_env(Some(cmd.into())).expect("explicit");
+    /// assert_eq!(explicit_cmd.get_cmd(), cmd);
+    ///
+    /// // Error if no command + environment variable not set.
+    /// assert_eq!(var_os(CVC5_ENV_VAR), None);
+    /// let error = SmtConf::cvc5_or_env(None);
+    /// match error {
+    ///     Ok(_) => panic!("expected error, got an SMT style"),
+    ///     Err(e) => assert_eq!(
+    ///         &e.to_string(),
+    ///         "no command for CVC5 provided, \
+    ///         and `RSMT2_CVC5_CMD` environment variable not set; \
+    ///         cannot spawn CVC5 solver"
+    ///     ),
+    /// }
+    ///
+    /// // Retrieves the command from the environment.
+    /// let cmd = "cvc5_implicit";
+    /// assert_eq!(CVC5_ENV_VAR, "RSMT2_CVC5_CMD");
+    /// set_var(CVC5_ENV_VAR, cmd);
+    /// let implicit_cmd = SmtConf::cvc5_or_env(None).expect("implicit");
+    /// assert_eq!(implicit_cmd.get_cmd(), cmd);
+    /// ```
+    #[inline]
+    pub fn cvc5_or_env(cmd: Option<String>) -> SmtRes<Self> {
+        if let Some(cmd) = cmd {
+            Ok(Self::cvc5(cmd))
+        } else {
+            let cmd = SmtStyle::CVC5.env_cmd()?;
+            if let Some(cmd) = cmd {
+                Ok(Self::cvc5(cmd))
+            } else {
+                bail!(
+                    "no command for CVC5 provided, \
+                    and `{}` environment variable not set; cannot spawn CVC5 solver",
+                    CVC5_ENV_VAR,
+                )
+            }
+        }
+    }
+
     /// Creates a Yices-2-like solver configuration from an optional, or the value of the
     /// [`YICES_2_ENV_VAR`] environment variable.
     ///
@@ -482,6 +575,28 @@ impl SmtConf {
         CVC4.default()
     }
 
+    /// Creates a new cvc5-like solver configuration and command.
+    ///
+    /// # Warning
+    ///
+    /// The command used to run a particular solver is up to the end-user. As such, it **does not
+    /// make sense** to use default commands for anything else than local testing. You should
+    /// explicitely pass the command to use with [`Self::cvc5`] instead.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use rsmt2::SmtConf;
+    /// let conf = SmtConf::default_cvc5();
+    /// assert! {
+    ///     conf.get_cmd() == "cvc5" || conf.get_cmd() == "cvc5.exe"
+    /// }
+    /// ```
+    #[inline]
+    pub fn default_cvc5() -> Self {
+        CVC5.default()
+    }
+
     /// Creates a new yices-2-like solver configuration and command.
     ///
     /// # Warning
@@ -530,6 +645,7 @@ impl SmtConf {
         match self.style {
             Z3 => "z3",
             CVC4 => "cvc4",
+            CVC5 => "cvc5",
             Yices2 => "yices2",
         }
     }
@@ -654,6 +770,7 @@ impl SmtConf {
         if val {
             match self.style {
                 CVC4 => self.options.push("--produce-models".into()),
+                CVC5 => self.options.push("--produce-models".into()),
                 Yices2 => self.options.push("--smt2-model-format".into()),
                 Z3 => (),
             }
@@ -699,7 +816,7 @@ impl SmtConf {
         self.incremental = val;
         if val {
             match self.style {
-                CVC4 | Yices2 => self.options.push("--incremental".into()),
+                CVC4 | CVC5 | Yices2 => self.options.push("--incremental".into()),
                 Z3 => (),
             }
         }
@@ -858,8 +975,8 @@ impl SmtConf {
     /// Adds information to a `get-value` error message if needed.
     pub fn enrich_get_values_error(&self, e: crate::errors::Error) -> crate::errors::Error {
         match self.style {
-            SmtStyle::CVC4 => e.chain_err(|| {
-                "some versions of CVC4 produce errors on `get-value` commands, \
+            SmtStyle::CVC4 | SmtStyle::CVC5 => e.chain_err(|| {
+                "some versions of CVC4 and CVC5 produce errors on `get-value` commands, \
                  consider using `get-model` instead"
             }),
             SmtStyle::Z3 | SmtStyle::Yices2 => e,
