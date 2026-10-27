@@ -373,6 +373,22 @@ impl<Parser> Solver<Parser> {
         self.tee.is_some()
     }
 
+    /// Process id of the solver kid.
+    ///
+    /// Lets a caller signal the kid from another thread, for example to kill
+    /// it at a deadline while this thread is blocked in a `check-sat`.
+    pub fn pid(&self) -> u32 {
+        self.kid.id()
+    }
+
+    /// Exit status of the solver kid if it has exited, without blocking.
+    ///
+    /// Together with [`Self::pid`], this lets a caller tell a kid it killed
+    /// itself (exit by signal) from one that crashed.
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.kid.try_wait()
+    }
+
     /// Kills the solver kid.
     ///
     /// The windows version just prints `(exit)` on the kid's `stdin`. Anything else seems to cause
